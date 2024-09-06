@@ -5,20 +5,9 @@ const HttpError = require("../models/http-error");
 const getCoordsForAddress = require("../util/location");
 
 const Place = require("../models/place");
-
-let DUMMY_PLACES = [
-  {
-    id: "p1",
-    title: "Empire State Building",
-    description: "one of the most famous sky crapers in the world!",
-    location: {
-      lat: 40.7484474,
-      lng: -73.9871516,
-    },
-    address: "NY 10001",
-    creator: "u1",
-  },
-];
+const User = require("../models/user");
+const { mongoose } = require("mongoose");
+const user = require("../models/user");
 
 const getPlaceById = async (req, res, next) => {
   const placeId = req.params.pid; // { pid: p1} <--- так відпрацьовує метод експресу params на req
@@ -43,21 +32,32 @@ const getPlaceById = async (req, res, next) => {
 const getPlacesByUserId = async (req, res, next) => {
   const userId = req.params.uid; // { pid: p1} <--- так відпрацьовує метод експресу params на req
 
-  let places;
+  // Альтернативний метод за допомогою методу populate();
+
+  let userWithPlaces;
 
   try {
-    places = await Place.find({ creator: userId });
+    places = await Place.findById(userId).populate("places"); // отримуємо доступ до плейсес в юзерІд за допомогою методу populate
   } catch (err) {
     const error = new HttpError("something went wrong!", 500);
     return next(error);
   }
 
-  if (!places || places.length === 0) {
+  // let places;
+
+  // try {
+  //   places = await Place.find({ creator: userId });
+  // } catch (err) {
+  //   const error = new HttpError("something went wrong!", 500);
+  //   return next(error);
+  // }
+
+  if (!userWithPlaces || userWithPlaces.places.length === 0) {
     return next(new HttpError("Could not find  places for provided ID!"), 404); // next не прериває подальше виконання коду, тому треба return
   }
 
   res.json({
-    places: places.map((place) => place.toObject({ getters: true })), // при методі find приходить массив. Тому необхідно його перебрати і переробити в обьекти
+    places: userWithPlaces.map((place) => place.toObject({ getters: true })), // при методі find приходить массив. Тому необхідно його перебрати і переробити в обьекти
   });
 };
 
@@ -87,8 +87,30 @@ const createPlace = async (req, res, next) => {
     creator,
   });
 
+  let user;
+
   try {
-    await createdPlace.save(); // save функція яка зберігає щось в БД
+    user = await User.findById(creator); // перевірка, чи існує користувач щоб додати плейс
+  } catch (err) {
+    const error = new HttpError("User wasn't found, try again", 500);
+    return next(error);
+  }
+
+  if (!user) {
+    const error = new HttpError("Couldnt find user for provided id", 404);
+    return next(error);
+  }
+
+  console.log(user);
+
+  try {
+    const session = await mongoose.startSession(); // для проведеня транзакцій треба запустити сесію
+    session.startTransaction(); //  запускаємо транзакцію в сесії
+    await createdPlace.save({ session: session }); // зберігаємо створене місце і отримуємо унікальний ід
+
+    user.places.push(createdPlace); //push() ---- Метод Мангуса! додаємо місце до нашого масиву плейсів в юзера.
+    await user.save({ session: session }); // додаємо зміни юзеру який відповідає поточній сессії
+    await session.commitTransaction(); // тільки на цьому єтапі зміни реально передадуться в базу даних
   } catch (err) {
     const error = new HttpError("Creating place failed, try again", 500);
     return next(error);
@@ -132,14 +154,25 @@ const deletePlaceById = async (req, res, next) => {
 
   let place;
   try {
-    place = await Place.findById(placeId);
+    place = await Place.findById(placeId).populate("creator"); // дозволяє знайти, чи розміщений цей документ в інших колекціях і працювати з ним. Обовязково повинна бути залежність через моделі
   } catch (err) {
     const error = new HttpError("coulnd find place by ID", 500);
     return next(error);
   }
 
+  if (!place) {
+    const error = new HttpError("Could not find place for this id.", 404);
+    return next(error);
+  }
+
   try {
-    await place.deleteOne(); // зберігаємо оновлений обєкт (плейс)
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    await place.deleteOne({ session: session });
+
+    await place.creator.places.pull(place); // pull автоматично видаляє id від користувача
+    await place.creator.save({ session: session }); // додаємо зміни юзеру який відповідає поточній сессії
+    await session.commitTransaction();
   } catch (err) {
     const error = new HttpError("Coulnd remove the place", 500);
     return next(error);

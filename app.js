@@ -36,10 +36,10 @@ app.use((error, req, res, next) => {
   res.json({ message: error.message || "An unknown error occured!" });
 });
 
-const URL = "";
+
 mongoose
   .connect(
-    `mongodb+srv://Samik:${apiToken}@cluster0.7p6ok.mongodb.net/places?retryWrites=true&w=majority&appName=Cluster0`
+    `mongodb+srv://Samik:${apiToken}@cluster0.7p6ok.mongodb.net/mern?retryWrites=true&w=majority&appName=Cluster0`
   ) // connect - асихнронний метод, тому ми використовуємо then.catch
   .then(() => {
     app.listen(PORT || 3000);
